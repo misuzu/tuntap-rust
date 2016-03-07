@@ -1,6 +1,11 @@
-use libc::in6_addr;
-use libc::{c_int, c_short, c_ulong};
+use libc::{c_int, c_ulong, c_short, sockaddr_in, in6_addr};
 
+
+#[repr(C)]
+pub struct in_ifreq {
+	  pub ifr_name: [u8; IFNAMSIZ],
+	  pub ifr_addr: sockaddr_in,
+}
 
 #[repr(C)]
 pub struct in6_ifreq {

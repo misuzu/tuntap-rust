@@ -5,4 +5,4 @@ authors = ["Vanhala Antti <antti.vanhala@aalto.fi>"]
 license = "MIT"
 
 [dependencies]
-libc = "*"
+libc = "^0.2"
