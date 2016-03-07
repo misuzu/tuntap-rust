@@ -1,6 +1,6 @@
 [package]
 name = "tuntap"
-version = "0.0.1"
+version = "0.1.0"
 authors = [
     "Vanhala Antti <antti.vanhala@aalto.fi>",
     "Matthew Bentley <matthew@bentley.link"
