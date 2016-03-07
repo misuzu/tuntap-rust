@@ -1,5 +1,3 @@
-#![feature(collections, core, fs, hash, io, libc, path, std_misc)]
-
 extern crate libc;
 
 pub use tuntap::TunTap;
