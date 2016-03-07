@@ -1,10 +1,11 @@
-use libc::{c_int, c_ulong, c_short, sockaddr_in, in6_addr};
+use libc::{c_int, c_ulong, c_short, sockaddr_in, in6_addr, sockaddr};
 
+include!(concat!(env!("OUT_DIR"), "/constants.rs"));
 
 #[repr(C)]
 pub struct in_ifreq {
-	  pub ifr_name: [u8; IFNAMSIZ],
-	  pub ifr_addr: sockaddr_in,
+    pub ifr_name: [u8; IFNAMSIZ],
+    pub ifr_addr: sockaddr_in,
 }
 
 #[repr(C)]
@@ -26,18 +27,8 @@ pub struct ioctl_ifindex_data {
     pub ifr_ifindex: c_int,
 }
 
-extern "C" {
-    pub static TUNSETIFF: c_ulong;
-    pub static SIOCSIFADDR: c_ulong;
-    pub static SIOCGIFINDEX: c_ulong;
-    pub static SIOCGIFFLAGS: c_ulong;
-    pub static SIOCSIFFLAGS: c_ulong;
-
-    pub static IFF_TUN: c_short;
-    pub static IFF_TAP: c_short;
-    pub static IFF_UP: c_short;
-    pub static IFF_RUNNING: c_short;
-    pub static IFF_NO_PI: c_short;
+#[repr(C)]
+pub struct ioctl_mac {
+    pub ifr_name: [u8; IFNAMSIZ],
+    pub ifr_addr: sockaddr,
 }
-
-pub const IFNAMSIZ: usize = 16;

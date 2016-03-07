@@ -1,8 +1,12 @@
 [package]
 name = "tuntap"
 version = "0.0.1"
-authors = ["Vanhala Antti <antti.vanhala@aalto.fi>"]
+authors = [
+    "Vanhala Antti <antti.vanhala@aalto.fi>",
+    "Matthew Bentley <matthew@bentley.link"
+]
 license = "MIT"
+build = "build.rs"
 
 [dependencies]
 libc = "^0.2"
