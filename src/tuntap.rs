@@ -5,20 +5,16 @@ use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::io;
 use std::mem;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::os::unix::prelude::AsRawFd;
 use std::path::Path;
-use libc::{c_int, c_char, c_void, AF_INET, AF_INET6, SOCK_DGRAM, socket, ioctl, close, in_addr,
-           in6_addr, sockaddr_in, sa_family_t, sockaddr};
+use libc::{c_int, c_char, AF_INET, AF_INET6, SOCK_DGRAM, socket, ioctl, close,
+           sockaddr_in, sa_family_t, sockaddr, in_addr, in6_addr};
 use c_interop::*;
 
 const DEVICE_PATH: &'static str = "/dev/net/tun";
 
 const MTU_SIZE: usize = 1500;
-
-
-extern "C" {
-    fn inet_pton(af: c_int, src: *const c_char, dst: *mut c_void) -> c_int;
-}
 
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -27,63 +23,23 @@ pub enum TunTapType {
     Tap,
 }
 
-pub enum IpType {
-    Ipv4,
-    Ipv6,
-}
-
 pub struct TunTap {
     pub file: File,
-    sock: c_int,
-    ip_type: IpType,
     if_name: [u8; IFNAMSIZ],
-    if_index: c_int,
-}
-
-impl Drop for TunTap {
-    fn drop(&mut self) {
-        unsafe { close(self.sock) };
-    }
 }
 
 impl fmt::Debug for TunTap {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Tun({:?})", self.get_name())
+        write!(f, "Tun({:?})", self.if_name)
     }
 }
 
-
 impl TunTap {
-    pub fn create(typ: TunTapType, ip_type: IpType) -> TunTap {
-        TunTap::create_named(typ, ip_type, "")
-    }
-
-    pub fn create_named_from_address(typ: TunTapType, name: &str, ip: &str) -> TunTap {
-        let ip_c = &CString::new(ip).unwrap();
-        let ip_type = match TunTap::get_in_addr(ip_c) {
-            Ok(_) => IpType::Ipv4,
-            Err(_) => {
-                match TunTap::get_in6_addr(ip_c) {
-                    Ok(_) => IpType::Ipv6,
-                    Err(_) => panic!("Ip address was neither version 4 or version 6"),
-                }
-            }
-        };
-        let tt = TunTap::create_named(typ, ip_type, name);
-        tt.add_address(ip);
-        tt
-    }
-
-    pub fn create_named(typ: TunTapType, ip_type: IpType, name: &str) -> TunTap {
+    pub fn new(typ: TunTapType, name: &str) -> TunTap {
         let (file, if_name) = TunTap::create_if(typ, name);
-        let (sock, if_index) = TunTap::create_socket(&ip_type, if_name);
-
         TunTap {
             file: file,
-            sock: sock,
-            ip_type: ip_type,
             if_name: if_name,
-            if_index: if_index,
         }
     }
 
@@ -117,53 +73,31 @@ impl TunTap {
             panic!("{}", io::Error::last_os_error());
         }
 
+        TunTap::up(req.ifr_name);
+
         (file, req.ifr_name)
     }
 
-    fn create_socket(ip_type: &IpType, if_name: [u8; IFNAMSIZ]) -> (c_int, c_int) {
-        let sock_type = match ip_type {
-            &IpType::Ipv4 => AF_INET,
-            &IpType::Ipv6 => AF_INET6,
-        };
+    fn create_socket(sock_type: i32) -> c_int {
         let sock = unsafe { socket(sock_type, SOCK_DGRAM, 0) };
         if sock < 0 {
             panic!("{}", io::Error::last_os_error());
         }
-
-        let mut req = ioctl_ifindex_data {
-            ifr_name: if_name,
-            ifr_ifindex: -1,
-        };
-
-        let res = unsafe { ioctl(sock, SIOCGIFINDEX, &mut req) };
-        if res < 0 {
-            let err = io::Error::last_os_error();
-            unsafe { close(sock) };
-            panic!("{}", err);
-        }
-
-        (sock, req.ifr_ifindex)
+        sock
     }
 
-    pub fn get_name(&self) -> CString {
-        let mut it = self.if_name.iter();
-        let nul_pos = match it.position(|x| *x == 0) {
-            Some(p) => p,
-            None => panic!("Device name should be null-terminated"),
-        };
+    fn up(if_name: [u8; IFNAMSIZ]) {
+        let sock = TunTap::create_socket(AF_INET);
 
-        CString::new(&self.if_name[..nul_pos]).unwrap()
-    }
-
-    pub fn up(&self) {
         let mut req = ioctl_flags_data {
-            ifr_name: self.if_name,
+            ifr_name: if_name,
             ifr_flags: 0,
         };
 
 
-        let res = unsafe { ioctl(self.sock, SIOCGIFFLAGS, &mut req) };
+        let res = unsafe { ioctl(sock, SIOCGIFFLAGS, &mut req) };
         if res < 0 {
+            unsafe { close(sock) };
             panic!("{}", io::Error::last_os_error());
         }
 
@@ -174,43 +108,26 @@ impl TunTap {
 
         req.ifr_flags |= IFF_UP | IFF_RUNNING;
 
-        let res = unsafe { ioctl(self.sock, SIOCSIFFLAGS, &mut req) };
+        let res = unsafe { ioctl(sock, SIOCSIFFLAGS, &mut req) };
         if res < 0 {
+            unsafe { close(sock) };
             panic!("{}", io::Error::last_os_error());
         }
+        unsafe { close(sock) };
     }
 
-
-    fn get_addr<T>(ip: &CString, addr_type: i32, addr: &mut T) -> Result<(), &'static str> {
-        let addr_ptr = addr as *mut _ as *mut c_void;
-        match unsafe { inet_pton(addr_type, ip.as_ptr(), addr_ptr) } {
-            1 => Ok(()),
-            _ => Err("not a valid address"),
-        }
-    }
-
-    fn get_in_addr(ip: &CString) -> Result<in_addr, &'static str> {
-        let mut addr = in_addr { s_addr: 0 };
-        match TunTap::get_addr(ip, AF_INET, &mut addr) {
-            Ok(_) => Ok(addr),
-            Err(_) => Err("not a valid IPv4 address"),
-        }
-    }
-
-    fn get_in6_addr(ip: &CString) -> Result<in6_addr, &'static str> {
-        let mut addr: in6_addr = unsafe { mem::uninitialized() };
-        match TunTap::get_addr(ip, AF_INET6, &mut addr) {
-            Ok(_) => Ok(addr),
-            Err(_) => Err("not a valid IPv6 address"),
-        }
-    }
-
-    fn add_ipv4_addr(&self, ip: &CString) {
-        let addr = TunTap::get_in_addr(ip).unwrap();
+    pub fn add_ipv4_addr(&self, addr: Ipv4Addr) {
+        let octets = addr.octets();
+        let sock = TunTap::create_socket(AF_INET);
         let sock_addr = sockaddr_in {
             sin_family: AF_INET as sa_family_t,
             sin_port: 0,
-            sin_addr: addr,
+            sin_addr: in_addr {
+                s_addr: (((octets[0] as u32) << 24) |
+                         ((octets[1] as u32) << 16) |
+                         ((octets[2] as u32) <<  8) |
+                          (octets[3] as u32)).to_be(),
+            },
             sin_zero: [0, 0, 0, 0, 0, 0, 0, 0],
         };
 
@@ -219,26 +136,53 @@ impl TunTap {
             ifr_addr: sock_addr,
         };
 
-        let res = unsafe { ioctl(self.sock, SIOCSIFADDR, &mut req) };
+        let res = unsafe { ioctl(sock, SIOCSIFADDR, &mut req) };
         if res < 0 {
+            unsafe { close(sock) };
             panic!("{}", io::Error::last_os_error());
         }
+        unsafe { close(sock) };
     }
 
-    fn add_ipv6_addr(&self, ip: &CString) {
-        let addr = TunTap::get_in6_addr(ip).unwrap();
-        let mut req = in6_ifreq {
-            ifr6_addr: addr,
-            ifr6_prefixlen: 8,
-            ifr6_ifindex: self.if_index,
+    pub fn add_ipv6_addr(&self, addr: Ipv6Addr) {
+        let segments = addr.segments();
+        let mut ifr6_addr: in6_addr = unsafe { mem::zeroed() };
+        ifr6_addr.s6_addr = [
+            (segments[0] >> 8) as u8, segments[0] as u8,
+            (segments[1] >> 8) as u8, segments[1] as u8,
+            (segments[2] >> 8) as u8, segments[2] as u8,
+            (segments[3] >> 8) as u8, segments[3] as u8,
+            (segments[4] >> 8) as u8, segments[4] as u8,
+            (segments[5] >> 8) as u8, segments[5] as u8,
+            (segments[6] >> 8) as u8, segments[6] as u8,
+            (segments[7] >> 8) as u8, segments[7] as u8,
+        ];
+        let sock = TunTap::create_socket(AF_INET6);
+        let mut req = ioctl_ifindex_data {
+            ifr_name: self.if_name,
+            ifr_ifindex: -1,
         };
-        let res = unsafe { ioctl(self.sock, SIOCSIFADDR, &mut req) };
+        let res = unsafe { ioctl(sock, SIOCGIFINDEX, &mut req) };
         if res < 0 {
+            unsafe { close(sock) };
+            let err = io::Error::last_os_error();
+            panic!("{}", err);
+        }
+        let mut req = in6_ifreq {
+            ifr6_addr: ifr6_addr,
+            ifr6_prefixlen: 8,
+            ifr6_ifindex: req.ifr_ifindex,
+        };
+        let res = unsafe { ioctl(sock, SIOCSIFADDR, &mut req) };
+        if res < 0 {
+            unsafe { close(sock) };
             panic!("{}", io::Error::last_os_error());
         }
+        unsafe { close(sock) };
     }
 
     pub fn set_mac(&self, mac: [u8; 6]) {
+        let sock = TunTap::create_socket(AF_INET);
         let mut req = ioctl_mac {
             ifr_name: self.if_name,
             ifr_addr: sockaddr {
@@ -249,18 +193,18 @@ impl TunTap {
         for (i, b) in mac.iter().enumerate() {
             req.ifr_addr.sa_data[i] = *b as c_char;
         }
-        let res = unsafe { ioctl(self.sock, SIOCSIFHWADDR, &req) };
+        let res = unsafe { ioctl(sock, SIOCSIFHWADDR, &req) };
         if res < 0 {
+            unsafe { close(sock) };
             panic!("{}", io::Error::last_os_error());
         }
+        unsafe { close(sock) };
     }
 
-    pub fn add_address(&self, ip: &str) {
-        self.up();
-        let ip_c = &CString::new(ip).unwrap();
-        match self.ip_type {
-            IpType::Ipv4 => self.add_ipv4_addr(ip_c),
-            IpType::Ipv6 => self.add_ipv6_addr(ip_c),
+    pub fn add_address(&self, addr: IpAddr) {
+        match addr {
+            IpAddr::V4(value) => self.add_ipv4_addr(value),
+            IpAddr::V6(value) => self.add_ipv6_addr(value),
         }
     }
 

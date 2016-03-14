@@ -1,9 +1,10 @@
 [package]
 name = "tuntap"
-version = "0.1.0"
+version = "0.2.0"
 authors = [
     "Vanhala Antti <antti.vanhala@aalto.fi>",
-    "Matthew Bentley <matthew@bentley.link"
+    "Matthew Bentley <matthew@bentley.link>",
+    "Misuzu <bakalolka@gmail.com>",
 ]
 license = "MIT"
 build = "build.rs"
