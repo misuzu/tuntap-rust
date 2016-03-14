@@ -30,7 +30,7 @@ pub struct TunTap {
 
 impl fmt::Debug for TunTap {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Tun({:?})", self.if_name)
+        write!(f, "Tun({})", self.get_name())
     }
 }
 
@@ -41,6 +41,14 @@ impl TunTap {
             file: file,
             if_name: if_name,
         }
+    }
+
+    pub fn get_name(&self) -> String {
+        let nul_pos = match self.if_name.iter().position(|x| *x == 0) {
+            Some(p) => p,
+            None => panic!("Device name should be null-terminated"),
+        };
+        CString::new(&self.if_name[..nul_pos]).unwrap().into_string().unwrap()
     }
 
     fn create_if(typ: TunTapType, name: &str) -> (File, [u8; IFNAMSIZ]) {
